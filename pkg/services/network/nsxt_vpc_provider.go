@@ -22,7 +22,8 @@ import (
 
 	"github.com/pkg/errors"
 	nsxopv1 "github.com/vmware-tanzu/nsx-operator/pkg/apis/v1alpha1"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha2/common"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -173,15 +174,28 @@ func (vp *nsxtVPCNetworkProvider) GetVMServiceAnnotations(_ context.Context, _ *
 // ConfigureVirtualMachine configures a VirtualMachine object based on the networking configuration.
 func (vp *nsxtVPCNetworkProvider) ConfigureVirtualMachine(_ context.Context, clusterCtx *vmware.ClusterContext, vm *vmoprv1.VirtualMachine) error {
 	networkName := clusterCtx.VSphereCluster.Name
-	for _, vnif := range vm.Spec.NetworkInterfaces {
-		if vnif.NetworkType == NSXTVPCSubnetSetNetworkType && vnif.NetworkName == networkName {
-			// expected network interface is already found
-			return nil
+	if vm.Spec.Network != nil {
+		for _, vnif := range vm.Spec.Network.Interfaces {
+			if vnif.Network.Kind == NSXTVPCNetworkKind && vnif.Network.Name == networkName {
+				// expected network interface is already found
+				return nil
+			}
+		}
+	} else {
+		vm.Spec.Network = &vmoprv1.VirtualMachineNetworkSpec{
+			Interfaces: []vmoprv1.VirtualMachineNetworkInterfaceSpec{},
 		}
 	}
-	vm.Spec.NetworkInterfaces = append(vm.Spec.NetworkInterfaces, vmoprv1.VirtualMachineNetworkInterface{
-		NetworkName: networkName,
-		NetworkType: NSXTVPCSubnetSetNetworkType,
+	// add the expected network interface
+	vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, vmoprv1.VirtualMachineNetworkInterfaceSpec{
+		Name: "eth0",
+		Network: common.PartialObjectRef{
+			Name: networkName,
+			TypeMeta: metav1.TypeMeta{
+				Kind:       NSXTVPCNetworkKind,
+				APIVersion: nsxopv1.SchemeGroupVersion.String(),
+			},
+		},
 	})
 	return nil
 }

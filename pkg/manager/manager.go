@@ -24,6 +24,7 @@ import (
 	netopv1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
 	nsxopv1 "github.com/vmware-tanzu/nsx-operator/pkg/apis/v1alpha1"
 	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmoprv1alpha2 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	ncpv1 "github.com/vmware-tanzu/vm-operator/external/ncp/api/v1alpha1"
 	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
 	"gopkg.in/fsnotify.v1"
@@ -63,6 +64,7 @@ func New(ctx context.Context, opts Options) (Manager, error) {
 	_ = bootstrapv1.AddToScheme(opts.Scheme)
 	_ = vmwarev1.AddToScheme(opts.Scheme)
 	_ = vmoprv1.AddToScheme(opts.Scheme)
+	_ = vmoprv1alpha2.AddToScheme(opts.Scheme)
 	_ = ncpv1.AddToScheme(opts.Scheme)
 	_ = netopv1.AddToScheme(opts.Scheme)
 	_ = nsxopv1.AddToScheme(opts.Scheme)

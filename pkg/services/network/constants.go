@@ -18,13 +18,15 @@ limitations under the License.
 package network
 
 const (
-	// NSXTTypeNetwork is the name of the NSX-T network type.
-	NSXTTypeNetwork = "nsx-t"
+	// NSXTNetworkKind is the Kind of the NSX-T network type.
+	NSXTNetworkKind = "VirtualNetwork"
+	// VDSNetworkKind is the Kind of the VDS network type.
+	VDSNetworkKind = "Network"
+	// NSXTVPCNetworkKind is the Kind of the NSX-T VPC network type.
+	NSXTVPCNetworkKind = "SubnetSet"
+
 	// NSXTVNetSelectorKey is also defined in VM Operator.
 	NSXTVNetSelectorKey = "ncp.vmware.com/virtual-network-name"
-	// NSXTVPCSubnetSetNetworkType is the name of the NSX VPC network type. Please refer to:
-	// https://github.com/vmware-tanzu/vm-operator/blob/main/api/v1alpha1/virtualmachine_types.go#L149.
-	NSXTVPCSubnetSetNetworkType = "nsx-t-subnetset"
 
 	// CAPVDefaultNetworkLabel is a label used to identify the default network.
 	CAPVDefaultNetworkLabel = "capv.vmware.com/is-default-network"

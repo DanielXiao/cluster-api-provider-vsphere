@@ -20,14 +20,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/pkg/errors"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha2/common"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apitypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -40,6 +41,13 @@ import (
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
 	infrautilv1 "sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 )
+
+var prepCondTypes = []string{
+	vmoprv1.VirtualMachineConditionClassReady,
+	vmoprv1.VirtualMachineConditionImageReady,
+	vmoprv1.VirtualMachineConditionVMSetResourcePolicyReady,
+	vmoprv1.VirtualMachineConditionBootstrapReady,
+}
 
 // VmopMachineService reconciles VM Operator VM.
 type VmopMachineService struct {
@@ -206,9 +214,11 @@ func (v *VmopMachineService) ReconcileNormal(ctx context.Context, machineCtx cap
 	// For now, we set conditions based on the whole virtualmachine status.
 	// TODO: vm-operator does not use the cluster-api condition type. so can't use cluster-api util functions to fetch the condition
 	for _, cond := range vmOperatorVM.Status.Conditions {
-		if cond.Type == vmoprv1.VirtualMachinePrereqReadyCondition && cond.Severity == vmoprv1.ConditionSeverityError {
-			conditions.MarkFalse(supervisorMachineCtx.VSphereMachine, infrav1.VMProvisionedCondition, cond.Reason, clusterv1.ConditionSeverityError, cond.Message)
-			return false, errors.Errorf("vm prerequisites check fails: %s", supervisorMachineCtx)
+		for _, prepCondType := range prepCondTypes {
+			if cond.Type == prepCondType && cond.Status != metav1.ConditionTrue {
+				conditions.MarkFalse(supervisorMachineCtx.VSphereMachine, infrav1.VMProvisionedCondition, cond.Reason, clusterv1.ConditionSeverityError, cond.Message)
+				return false, errors.Errorf("vm prerequisites check fails: %s", supervisorMachineCtx)
+			}
 		}
 	}
 
@@ -217,7 +227,13 @@ func (v *VmopMachineService) ReconcileNormal(ctx context.Context, machineCtx cap
 	// * Been powered on
 	// * An IP address
 	// * A BIOS UUID
-	if vmOperatorVM.Status.Phase != vmoprv1.Created {
+	isVMCreated := false
+	for _, cond := range vmOperatorVM.Status.Conditions {
+		if cond.Type == vmoprv1.VirtualMachineConditionCreated && cond.Status == metav1.ConditionTrue {
+			isVMCreated = true
+		}
+	}
+	if !isVMCreated {
 		conditions.MarkFalse(supervisorMachineCtx.VSphereMachine, infrav1.VMProvisionedCondition, vmwarev1.VMProvisionStartedReason, clusterv1.ConditionSeverityInfo, "")
 		log.Info(fmt.Sprintf("VM is not yet created: %s", supervisorMachineCtx))
 		return true, nil
@@ -225,7 +241,7 @@ func (v *VmopMachineService) ReconcileNormal(ctx context.Context, machineCtx cap
 	// Mark the VM as created
 	supervisorMachineCtx.VSphereMachine.Status.VMStatus = vmwarev1.VirtualMachineStateCreated
 
-	if vmOperatorVM.Status.PowerState != vmoprv1.VirtualMachinePoweredOn {
+	if vmOperatorVM.Status.PowerState != vmoprv1.VirtualMachinePowerStateOn {
 		conditions.MarkFalse(supervisorMachineCtx.VSphereMachine, infrav1.VMProvisionedCondition, vmwarev1.PoweringOnReason, clusterv1.ConditionSeverityInfo, "")
 		log.Info(fmt.Sprintf("VM is not yet powered on: %s", supervisorMachineCtx))
 		return true, nil
@@ -233,7 +249,9 @@ func (v *VmopMachineService) ReconcileNormal(ctx context.Context, machineCtx cap
 	// Mark the VM as poweredOn
 	supervisorMachineCtx.VSphereMachine.Status.VMStatus = vmwarev1.VirtualMachineStatePoweredOn
 
-	if vmOperatorVM.Status.VmIp == "" {
+	if vmOperatorVM.Status.Network == nil ||
+		len(vmOperatorVM.Status.Network.Interfaces) == 0 ||
+		len(vmOperatorVM.Status.Network.Interfaces[0].IP.Addresses) == 0 {
 		conditions.MarkFalse(supervisorMachineCtx.VSphereMachine, infrav1.VMProvisionedCondition, vmwarev1.WaitingForNetworkAddressReason, clusterv1.ConditionSeverityInfo, "")
 		log.Info(fmt.Sprintf("VM does not have an IP address: %s", supervisorMachineCtx))
 		return true, nil
@@ -325,15 +343,23 @@ func (v *VmopMachineService) reconcileVMOperatorVM(ctx context.Context, supervis
 		if vmOperatorVM.Spec.StorageClass == "" {
 			vmOperatorVM.Spec.StorageClass = supervisorMachineCtx.VSphereMachine.Spec.StorageClass
 		}
-		vmOperatorVM.Spec.PowerState = vmoprv1.VirtualMachinePoweredOn
-		if vmOperatorVM.Spec.ResourcePolicyName == "" {
-			vmOperatorVM.Spec.ResourcePolicyName = supervisorMachineCtx.VSphereCluster.Status.ResourcePolicyName
+		vmOperatorVM.Spec.PowerState = vmoprv1.VirtualMachinePowerStateOn
+		if vmOperatorVM.Spec.Reserved == nil {
+			vmOperatorVM.Spec.Reserved = &vmoprv1.VirtualMachineReservedSpec{
+				ResourcePolicyName: supervisorMachineCtx.VSphereCluster.Status.ResourcePolicyName,
+			}
 		}
-		vmOperatorVM.Spec.VmMetadata = &vmoprv1.VirtualMachineMetadata{
-			SecretName: dataSecretName,
-			Transport:  vmoprv1.VirtualMachineMetadataCloudInitTransport,
+		vmOperatorVM.Spec.Bootstrap = &vmoprv1.VirtualMachineBootstrapSpec{
+			CloudInit: &vmoprv1.VirtualMachineBootstrapCloudInitSpec{
+				RawCloudConfig: &common.SecretKeySelector{
+					Key:  "user-data",
+					Name: dataSecretName,
+				},
+			},
 		}
-		vmOperatorVM.Spec.PowerOffMode = vmoprv1.VirtualMachinePowerOpMode(supervisorMachineCtx.VSphereMachine.Spec.PowerOffMode)
+		powerOffMode := string(supervisorMachineCtx.VSphereMachine.Spec.PowerOffMode)
+		powerOffMode = strings.ToUpper(powerOffMode[0:1]) + powerOffMode[1:]
+		vmOperatorVM.Spec.PowerOffMode = vmoprv1.VirtualMachinePowerOpMode(powerOffMode)
 		if vmOperatorVM.Spec.MinHardwareVersion == 0 {
 			vmOperatorVM.Spec.MinHardwareVersion = minHardwareVersion
 		}
@@ -350,10 +376,17 @@ func (v *VmopMachineService) reconcileVMOperatorVM(ctx context.Context, supervis
 		// readiness probes. The flag PerformsVMReadinessProbe is used to determine
 		// whether a VM readiness probe should be conducted.
 		if v.ConfigureControlPlaneVMReadinessProbe && infrautilv1.IsControlPlaneMachine(supervisorMachineCtx.Machine) && supervisorMachineCtx.Cluster.Status.ControlPlaneReady {
-			vmOperatorVM.Spec.ReadinessProbe = &vmoprv1.Probe{
-				TCPSocket: &vmoprv1.TCPSocketAction{
-					Port: intstr.FromInt(defaultAPIBindPort),
-				},
+			// Only config GuestInfo Probe on fresh new created VirtualMachine since existing
+			// VirtualMachine does not have an agent injected for health check
+			if vmOperatorVM.Spec.ReadinessProbe == nil {
+				vmOperatorVM.Spec.ReadinessProbe = &vmoprv1.VirtualMachineReadinessProbeSpec{
+					GuestInfo: []vmoprv1.GuestInfoAction{
+						{
+							Key:   "ready",
+							Value: "true",
+						},
+					},
+				}
 			}
 		}
 
@@ -397,11 +430,13 @@ func (v *VmopMachineService) reconcileVMOperatorVM(ctx context.Context, supervis
 }
 
 func (v *VmopMachineService) reconcileNetwork(supervisorMachineCtx *vmware.SupervisorMachineContext, vm *vmoprv1.VirtualMachine) bool {
-	if vm.Status.VmIp == "" {
+	if vm.Status.Network == nil ||
+		len(vm.Status.Network.Interfaces) == 0 ||
+		len(vm.Status.Network.Interfaces[0].IP.Addresses) == 0 {
 		return false
 	}
 
-	supervisorMachineCtx.VSphereMachine.Status.IPAddr = vm.Status.VmIp
+	supervisorMachineCtx.VSphereMachine.Status.IPAddr = vm.Status.Network.Interfaces[0].IP.Addresses[0].Address
 
 	return true
 }
@@ -494,10 +529,12 @@ func addVolume(vm *vmoprv1.VirtualMachine, name string) {
 
 	vm.Spec.Volumes = append(vm.Spec.Volumes, vmoprv1.VirtualMachineVolume{
 		Name: name,
-		PersistentVolumeClaim: &vmoprv1.PersistentVolumeClaimVolumeSource{
-			PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: name,
-				ReadOnly:  false,
+		VirtualMachineVolumeSource: vmoprv1.VirtualMachineVolumeSource{
+			PersistentVolumeClaim: &vmoprv1.PersistentVolumeClaimVolumeSource{
+				PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: name,
+					ReadOnly:  false,
+				},
 			},
 		},
 	})

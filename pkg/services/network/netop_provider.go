@@ -21,7 +21,9 @@ import (
 	"fmt"
 
 	netopv1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha2/common"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -122,18 +124,29 @@ func (np *netopNetworkProvider) ConfigureVirtualMachine(ctx context.Context, clu
 		return err
 	}
 
-	for _, vnif := range vm.Spec.NetworkInterfaces {
-		if vnif.NetworkType == string(network.Spec.Type) && vnif.NetworkName == network.Name {
-			// Expected network interface already exists.
-			return nil
+	if vm.Spec.Network != nil {
+		for _, vnif := range vm.Spec.Network.Interfaces {
+			if vnif.Network.Kind == VDSNetworkKind && vnif.Network.Name == network.Name {
+				// Expected network interface already exists.
+				return nil
+			}
+		}
+	} else {
+		vm.Spec.Network = &vmoprv1.VirtualMachineNetworkSpec{
+			Interfaces: []vmoprv1.VirtualMachineNetworkInterfaceSpec{},
 		}
 	}
-
-	vm.Spec.NetworkInterfaces = append(vm.Spec.NetworkInterfaces, vmoprv1.VirtualMachineNetworkInterface{
-		NetworkName: network.Name,
-		NetworkType: string(network.Spec.Type),
+	// add the expected network interface
+	vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, vmoprv1.VirtualMachineNetworkInterfaceSpec{
+		Name: "eth0",
+		Network: common.PartialObjectRef{
+			Name: network.Name,
+			TypeMeta: metav1.TypeMeta{
+				Kind:       VDSNetworkKind,
+				APIVersion: netopv1.SchemeGroupVersion.String(),
+			},
+		},
 	})
-
 	return nil
 }
 
