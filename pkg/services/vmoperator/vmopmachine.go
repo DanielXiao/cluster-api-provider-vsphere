@@ -27,7 +27,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apitypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -336,25 +335,6 @@ func (v *VmopMachineService) reconcileVMOperatorVM(ctx context.Context, supervis
 		vmOperatorVM.Spec.PowerOffMode = vmoprv1.VirtualMachinePowerOpMode(supervisorMachineCtx.VSphereMachine.Spec.PowerOffMode)
 		if vmOperatorVM.Spec.MinHardwareVersion == 0 {
 			vmOperatorVM.Spec.MinHardwareVersion = minHardwareVersion
-		}
-
-		// VMOperator supports readiness probe and will add/remove endpoints to a
-		// VirtualMachineService based on the outcome of the readiness check.
-		// When creating the initial control plane node, we do not declare a probe
-		// in order to reduce the likelihood of a race between the VirtualMachineService
-		// endpoint additions and the kubeadm commands run on the VM itself.
-		// Once the initial control plane node is ready, we can re-add the probe so
-		// that subsequent machines do not attempt to speak to a kube-apiserver
-		// that is not yet ready.
-		// Not all network providers (for example, NSX-VPC) provide support for VM
-		// readiness probes. The flag PerformsVMReadinessProbe is used to determine
-		// whether a VM readiness probe should be conducted.
-		if v.ConfigureControlPlaneVMReadinessProbe && infrautilv1.IsControlPlaneMachine(supervisorMachineCtx.Machine) && supervisorMachineCtx.Cluster.Status.ControlPlaneReady {
-			vmOperatorVM.Spec.ReadinessProbe = &vmoprv1.Probe{
-				TCPSocket: &vmoprv1.TCPSocketAction{
-					Port: intstr.FromInt(defaultAPIBindPort),
-				},
-			}
 		}
 
 		// Assign the VM's labels.

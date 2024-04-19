@@ -181,7 +181,11 @@ func (np *nsxtNetworkProvider) GetVMServiceAnnotations(ctx context.Context, clus
 		return nil, err
 	}
 
-	return map[string]string{NSXTVNetSelectorKey: vnetName}, nil
+	return map[string]string{
+		NSXTVNetSelectorKey:                     vnetName,
+		AnnotationServiceHealthCheckNodePortKey: KubeAPIServerPort,
+		AnnotationServiceHealthCheckProtocol:    ProtocolTCP,
+	}, nil
 }
 
 // ConfigureVirtualMachine configures a VirtualMachine object based on the networking configuration.

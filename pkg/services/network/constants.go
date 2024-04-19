@@ -26,6 +26,15 @@ const (
 	// https://github.com/vmware-tanzu/vm-operator/blob/main/api/v1alpha1/virtualmachine_types.go#L149.
 	NSXTVPCSubnetSetNetworkType = "nsx-t-subnetset"
 
+	// AnnotationServiceHealthCheckNodePortKey specify the port which vm-operator tells LB providers to monitor.
+	AnnotationServiceHealthCheckNodePortKey = "virtualmachineservice.vmoperator.vmware.com/service.healthCheckNodePort"
+	// AnnotationServiceHealthCheckProtocol specify the protocol which ncp will use to monitor.
+	AnnotationServiceHealthCheckProtocol = "ncp/healthCheckProtocol"
+	// ProtocolTCP is the TCP protocol
+	ProtocolTCP = "tcp"
+	// KubeAPIServerPort is the kube-apiserver port number
+	KubeAPIServerPort = "6443"
+
 	// CAPVDefaultNetworkLabel is a label used to identify the default network.
 	CAPVDefaultNetworkLabel = "capv.vmware.com/is-default-network"
 	// NetOpNetworkNameAnnotation is the key used in an annotation to define the NetOp network. The expected value is the network name.
