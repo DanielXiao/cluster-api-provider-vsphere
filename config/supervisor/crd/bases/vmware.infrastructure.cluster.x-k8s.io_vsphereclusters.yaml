@@ -55,6 +55,8 @@ spec:
                 - host
                 - port
                 type: object
+              staticLoadBalancerIP:
+                type: string
             type: object
           status:
             description: VSphereClusterStatus defines the observed state of VSphereClusterSpec.

@@ -38,6 +38,8 @@ const (
 type VSphereClusterSpec struct {
 	// +optional
 	ControlPlaneEndpoint clusterv1.APIEndpoint `json:"controlPlaneEndpoint"`
+	// +optional
+	StaticLoadBalancerIP string `json:"staticLoadBalancerIP,omitempty"`
 }
 
 // VSphereClusterStatus defines the observed state of VSphereClusterSpec.

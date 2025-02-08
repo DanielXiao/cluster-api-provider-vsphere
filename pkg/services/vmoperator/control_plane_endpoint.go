@@ -181,6 +181,10 @@ func (s *CPService) createVMControlPlaneService(ctx context.Context, clusterCtx 
 			Selector: clusterRoleVMLabels(clusterCtx, true),
 		}
 
+		if clusterCtx.VSphereCluster.Spec.StaticLoadBalancerIP != "" {
+			vmService.Spec.LoadBalancerIP = clusterCtx.VSphereCluster.Spec.StaticLoadBalancerIP
+		}
+
 		if err := ctrlutil.SetOwnerReference(
 			clusterCtx.VSphereCluster,
 			vmService,

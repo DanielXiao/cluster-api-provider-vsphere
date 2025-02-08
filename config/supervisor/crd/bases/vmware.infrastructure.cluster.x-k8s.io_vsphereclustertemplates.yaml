@@ -63,6 +63,8 @@ spec:
                         - host
                         - port
                         type: object
+                      staticLoadBalancerIP:
+                        type: string
                     type: object
                 required:
                 - spec
