@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -168,26 +169,45 @@ func (vp *nsxtVPCNetworkProvider) GetVMServiceAnnotations(_ context.Context, _ *
 
 // ConfigureVirtualMachine configures a VirtualMachine object based on the networking configuration.
 func (vp *nsxtVPCNetworkProvider) ConfigureVirtualMachine(_ context.Context, clusterCtx *vmware.ClusterContext, vm *vmoprv1.VirtualMachine) error {
-	networkName := clusterCtx.VSphereCluster.Name
+	// primary network interface
+	if err := configInterface(vm, clusterCtx.VSphereCluster.Name, NetworkGVKNSXTVPC, false); err != nil {
+		return err
+	}
+	// secondary network interfaces
+	for _, networkName := range clusterCtx.VSphereCluster.Spec.SecondaryNetworks {
+		if err := configInterface(vm, networkName, NetworkGVKNSXTVPC, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func configInterface(vm *vmoprv1.VirtualMachine, networkName string, gvk schema.GroupVersionKind, disableGateway bool) error {
 	if vm.Spec.Network == nil {
 		vm.Spec.Network = &vmoprv1.VirtualMachineNetworkSpec{}
 	}
 	for _, vnif := range vm.Spec.Network.Interfaces {
-		if vnif.Network.TypeMeta.GroupVersionKind() == NetworkGVKNSXTVPC && vnif.Network.Name == networkName {
+		if vnif.Network.TypeMeta.GroupVersionKind() == gvk && vnif.Network.Name == networkName {
 			// expected network interface is already found
 			return nil
 		}
 	}
-
+	var gateway4, gateway6 string
+	if disableGateway {
+		gateway4 = "None"
+		gateway6 = "None"
+	}
 	vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, vmoprv1.VirtualMachineNetworkInterfaceSpec{
 		Name: fmt.Sprintf("eth%d", len(vm.Spec.Network.Interfaces)),
 		Network: vmoprv1common.PartialObjectRef{
 			TypeMeta: metav1.TypeMeta{
-				Kind:       NetworkGVKNSXTVPC.Kind,
-				APIVersion: NetworkGVKNSXTVPC.GroupVersion().String(),
+				Kind:       gvk.Kind,
+				APIVersion: gvk.GroupVersion().String(),
 			},
 			Name: networkName,
 		},
+		Gateway4: gateway4,
+		Gateway6: gateway6,
 	})
 	return nil
 }

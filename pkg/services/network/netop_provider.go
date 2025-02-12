@@ -22,8 +22,6 @@ import (
 
 	netopv1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
 	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
-	vmoprv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha2/common"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -124,27 +122,16 @@ func (np *netopNetworkProvider) ConfigureVirtualMachine(ctx context.Context, clu
 		return err
 	}
 
-	if vm.Spec.Network == nil {
-		vm.Spec.Network = &vmoprv1.VirtualMachineNetworkSpec{}
+	// primary network interface
+	if err := configInterface(vm, network.Name, NetworkGVKNetOperator, false); err != nil {
+		return err
 	}
-	for _, vnif := range vm.Spec.Network.Interfaces {
-		if vnif.Network.TypeMeta.GroupVersionKind() == NetworkGVKNetOperator && vnif.Network.Name == network.Name {
-			// Expected network interface already exists.
-			return nil
+	// secondary network interfaces
+	for _, networkName := range clusterCtx.VSphereCluster.Spec.SecondaryNetworks {
+		if err := configInterface(vm, networkName, NetworkGVKNetOperator, true); err != nil {
+			return err
 		}
 	}
-
-	vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, vmoprv1.VirtualMachineNetworkInterfaceSpec{
-		Name: fmt.Sprintf("eth%d", len(vm.Spec.Network.Interfaces)),
-		Network: vmoprv1common.PartialObjectRef{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       NetworkGVKNetOperator.Kind,
-				APIVersion: NetworkGVKNetOperator.GroupVersion().String(),
-			},
-			Name: network.Name,
-		},
-	})
-
 	return nil
 }
 

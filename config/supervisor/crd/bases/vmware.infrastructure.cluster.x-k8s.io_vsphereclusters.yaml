@@ -55,6 +55,10 @@ spec:
                 - host
                 - port
                 type: object
+              secondaryNetworks:
+                items:
+                  type: string
+                type: array
               staticLoadBalancerIP:
                 type: string
             type: object

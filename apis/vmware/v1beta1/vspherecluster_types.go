@@ -40,6 +40,8 @@ type VSphereClusterSpec struct {
 	ControlPlaneEndpoint clusterv1.APIEndpoint `json:"controlPlaneEndpoint"`
 	// +optional
 	StaticLoadBalancerIP string `json:"staticLoadBalancerIP,omitempty"`
+	// +optional
+	SecondaryNetworks []string `json:"secondaryNetworks,omitempty"`
 }
 
 // VSphereClusterStatus defines the observed state of VSphereClusterSpec.
