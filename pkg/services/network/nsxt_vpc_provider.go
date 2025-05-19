@@ -192,11 +192,6 @@ func configInterface(vm *vmoprv1.VirtualMachine, networkName string, gvk schema.
 			return nil
 		}
 	}
-	var gateway4, gateway6 string
-	if disableGateway {
-		gateway4 = "None"
-		gateway6 = "None"
-	}
 	vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, vmoprv1.VirtualMachineNetworkInterfaceSpec{
 		Name: fmt.Sprintf("eth%d", len(vm.Spec.Network.Interfaces)),
 		Network: vmoprv1common.PartialObjectRef{
@@ -206,8 +201,6 @@ func configInterface(vm *vmoprv1.VirtualMachine, networkName string, gvk schema.
 			},
 			Name: networkName,
 		},
-		Gateway4: gateway4,
-		Gateway6: gateway6,
 	})
 	return nil
 }
