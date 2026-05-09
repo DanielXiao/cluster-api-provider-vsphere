@@ -34,6 +34,14 @@ const (
 	// alpha: v1.14
 	MultiNetworks featuregate.Feature = "MultiNetworks"
 
+	// PerClusterNetworkProvider is a feature gate that switches CAPV from a process-wide
+	// network provider (selected once via the --network-provider flag) to a per-VSphereCluster
+	// network provider, resolved on every reconcile and admission call from
+	// VSphereCluster.spec.network.provider.
+	//
+	// alpha: v1.16
+	PerClusterNetworkProvider featuregate.Feature = "PerClusterNetworkProvider"
+
 	// NodeAntiAffinity is a feature gate for the NodeAntiAffinity functionality.
 	//
 	// alpha: v1.4
@@ -76,4 +84,6 @@ var defaultCAPVFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
 	NamespaceScopedZones:   {Default: false, PreRelease: featuregate.Alpha},
 	NodeAutoPlacement:      {Default: false, PreRelease: featuregate.Alpha},
 	MultiNetworks:          {Default: false, PreRelease: featuregate.Alpha},
+
+	PerClusterNetworkProvider: {Default: false, PreRelease: featuregate.Alpha},
 }

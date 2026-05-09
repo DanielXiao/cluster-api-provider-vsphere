@@ -60,7 +60,6 @@ import (
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
 	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 	conversionclient "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/client"
-	inframanager "sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/vmoperator"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
@@ -84,8 +83,9 @@ const (
 // +kubebuilder:rbac:groups="",resources=configmaps/status,verbs=get;update;patch
 
 // AddMachineControllerToManager adds the machine controller to the provided
-// manager.
-func AddMachineControllerToManager(ctx context.Context, controllerManagerContext *capvcontext.ControllerManagerContext, mgr manager.Manager, supervisorBased bool, options controller.Options) error {
+// manager. networkProviderFactory is required when supervisorBased is true and
+// is ignored otherwise.
+func AddMachineControllerToManager(ctx context.Context, controllerManagerContext *capvcontext.ControllerManagerContext, mgr manager.Manager, supervisorBased bool, networkProviderFactory services.NetworkProviderFactory, options controller.Options) error {
 	r := &machineReconciler{
 		Client:          controllerManagerContext.Client,
 		Recorder:        mgr.GetEventRecorderFor("vspheremachine-controller"),
@@ -95,12 +95,11 @@ func AddMachineControllerToManager(ctx context.Context, controllerManagerContext
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "vspheremachine")
 
 	if supervisorBased {
-		networkProvider, err := inframanager.GetNetworkProvider(ctx, controllerManagerContext.Client, controllerManagerContext.NetworkProvider)
-		if err != nil {
-			return errors.Wrap(err, "failed to create a network provider")
+		if networkProviderFactory == nil {
+			return fmt.Errorf("networkProviderFactory is required for supervisor-based AddMachineControllerToManager")
 		}
-		r.networkProvider = networkProvider
-		r.VMService = &vmoperator.VmopMachineService{Client: controllerManagerContext.Client, ConfigureControlPlaneVMReadinessProbe: r.networkProvider.SupportsVMReadinessProbe()}
+		r.networkProviderFactory = networkProviderFactory
+		r.VMService = &vmoperator.VmopMachineService{Client: controllerManagerContext.Client}
 
 		// NOTE: use vm-operator native types for watches (the reconciler uses the internal hub version).
 		vm, err := conversionclient.WatchObject(r.Client, &vmoprvhub.VirtualMachine{})
@@ -180,11 +179,11 @@ func AddMachineControllerToManager(ctx context.Context, controllerManagerContext
 }
 
 type machineReconciler struct {
-	Client          client.Client
-	Recorder        record.EventRecorder
-	VMService       services.VSphereMachineService
-	networkProvider services.NetworkProvider
-	supervisorBased bool
+	Client                 client.Client
+	Recorder               record.EventRecorder
+	VMService              services.VSphereMachineService
+	networkProviderFactory services.NetworkProviderFactory
+	supervisorBased        bool
 }
 
 // Reconcile ensures the back-end state reflects the Kubernetes resource state intent.
@@ -422,7 +421,21 @@ func (r *machineReconciler) reconcileNormal(ctx context.Context, machineCtx capv
 			return reconcile.Result{}, nil
 		}
 	} else {
-		if err := r.setVMModifiers(ctx, machineCtx); err != nil {
+		// Resolve the network provider for this cluster on every reconcile.
+		// An error here only fires when spec.network.provider names an unknown
+		// provider; the empty case falls back to the --network-provider flag.
+		supervisorMachineCtx, ok := machineCtx.(*vmware.SupervisorMachineContext)
+		if !ok {
+			return reconcile.Result{}, errors.New("received unexpected MachineContext. expecting SupervisorMachineContext type")
+		}
+		np, err := r.networkProviderFactory.ForCluster(ctx, supervisorMachineCtx.GetClusterContext())
+		if err != nil {
+			return reconcile.Result{}, errors.Wrapf(err, "failed to resolve network provider for VSphereMachine %s/%s",
+				supervisorMachineCtx.VSphereMachine.Namespace, supervisorMachineCtx.VSphereMachine.Name)
+		}
+		supervisorMachineCtx.NetworkProvider = np
+
+		if err := r.setVMModifiers(ctx, machineCtx, np); err != nil {
 			return reconcile.Result{}, err
 		}
 	}
@@ -502,7 +515,7 @@ func (r *machineReconciler) patchMachineLabelsWithHostInfo(ctx context.Context, 
 }
 
 // Return hooks that will be invoked when a VirtualMachine is created.
-func (r *machineReconciler) setVMModifiers(ctx context.Context, machineCtx capvcontext.MachineContext) error {
+func (r *machineReconciler) setVMModifiers(ctx context.Context, machineCtx capvcontext.MachineContext, np services.NetworkProvider) error {
 	log := ctrl.LoggerFrom(ctx)
 	supervisorMachineCtx, ok := machineCtx.(*vmware.SupervisorMachineContext)
 	if !ok {
@@ -513,7 +526,7 @@ func (r *machineReconciler) setVMModifiers(ctx context.Context, machineCtx capvc
 		// No need to check the type. We know this will be a VirtualMachine
 		vm, _ := obj.(*vmoprvhub.VirtualMachine)
 		log.V(3).Info("Applying network config to VM")
-		err := r.networkProvider.ConfigureVirtualMachine(ctx, supervisorMachineCtx.GetClusterContext(), supervisorMachineCtx.VSphereMachine, vm)
+		err := np.ConfigureVirtualMachine(ctx, supervisorMachineCtx.GetClusterContext(), supervisorMachineCtx.VSphereMachine, vm)
 		if err != nil {
 			return nil, errors.Errorf("failed to configure machine network: %+v", err)
 		}

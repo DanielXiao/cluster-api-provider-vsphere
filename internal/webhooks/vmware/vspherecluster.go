@@ -34,7 +34,10 @@ import (
 
 // VSphereCluster implements a validation and defaulting webhook for VSphereCluster.
 type VSphereCluster struct {
-	// NetworkProvider is the network provider used by Supervisor based clusters
+	// NetworkProvider is the network provider used by Supervisor based clusters.
+	// When the PerClusterNetworkProvider feature gate is on, this is consulted
+	// only as the fallback for Clusters whose spec.network.provider is empty
+	// (i.e. pre-existing Clusters that pre-date the per-cluster label rollout).
 	NetworkProvider string
 }
 
@@ -48,12 +51,12 @@ func (webhook *VSphereCluster) SetupWebhookWithManager(mgr ctrl.Manager) error {
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
 func (webhook *VSphereCluster) ValidateCreate(_ context.Context, obj *vmwarev1.VSphereCluster) (admission.Warnings, error) {
-	return webhook.validateClusterNetwork(obj)
+	return webhook.validateClusterNetwork(nil, obj)
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
-func (webhook *VSphereCluster) ValidateUpdate(_ context.Context, _, newTyped *vmwarev1.VSphereCluster) (admission.Warnings, error) {
-	return webhook.validateClusterNetwork(newTyped)
+func (webhook *VSphereCluster) ValidateUpdate(_ context.Context, oldTyped, newTyped *vmwarev1.VSphereCluster) (admission.Warnings, error) {
+	return webhook.validateClusterNetwork(oldTyped, newTyped)
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
@@ -61,16 +64,33 @@ func (webhook *VSphereCluster) ValidateDelete(_ context.Context, _ *vmwarev1.VSp
 	return nil, nil
 }
 
-func (webhook *VSphereCluster) validateClusterNetwork(cluster *vmwarev1.VSphereCluster) (admission.Warnings, error) {
+func (webhook *VSphereCluster) validateClusterNetwork(oldCluster, cluster *vmwarev1.VSphereCluster) (admission.Warnings, error) {
+	var allErrs field.ErrorList
 	if !feature.Gates.Enabled(feature.MultiNetworks) && cluster.Spec.Network.NSXVPC.CreateSubnetSet != nil {
-		return nil, apierrors.NewInvalid(cluster.GroupVersionKind().GroupKind(), cluster.Name, field.ErrorList{
-			field.Forbidden(field.NewPath("spec", "network", "nsxVPC", "createSubnetSet"), "createSubnetSet can only be set when MultiNetworks feature gate is enabled"),
-		})
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "network", "nsxVPC", "createSubnetSet"), "createSubnetSet can only be set when MultiNetworks feature gate is enabled"))
 	}
-	if cluster.Spec.Network.NSXVPC.IsDefined() && webhook.NetworkProvider != manager.NSXVPCNetworkProvider {
-		return nil, apierrors.NewInvalid(cluster.GroupVersionKind().GroupKind(), cluster.Name, field.ErrorList{
-			field.Forbidden(field.NewPath("spec", "network", "nsxVPC"), "nsxVPC can only be set when network provider is NSX-VPC"),
-		})
+
+	// Resolve the active network provider for this cluster.
+	// Gate-on:  prefer cluster.spec.network.provider, fall back to the
+	//           --network-provider flag for empty values (pre-existing Clusters).
+	// Gate-off: always use the --network-provider flag value.
+	activeProvider := webhook.NetworkProvider
+	if feature.Gates.Enabled(feature.PerClusterNetworkProvider) && cluster.Spec.Network.Provider != "" {
+		activeProvider = cluster.Spec.Network.Provider
+	}
+
+	if cluster.Spec.Network.NSXVPC.IsDefined() && activeProvider != manager.NSXVPCNetworkProvider {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "network", "nsxVPC"), "nsxVPC can only be set when network provider is NSX-VPC"))
+	}
+
+	// Reject mutation of spec.network.provider once it is set. Update calls
+	// (oldCluster != nil) compare old vs new; once set, the field is immutable.
+	if oldCluster != nil && oldCluster.Spec.Network.Provider != "" && oldCluster.Spec.Network.Provider != cluster.Spec.Network.Provider {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "network", "provider"), "field is immutable once set"))
+	}
+
+	if len(allErrs) > 0 {
+		return nil, apierrors.NewInvalid(cluster.GroupVersionKind().GroupKind(), cluster.Name, allErrs)
 	}
 	return nil, nil
 }

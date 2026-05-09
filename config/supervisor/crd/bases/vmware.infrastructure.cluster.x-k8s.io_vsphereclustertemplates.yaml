@@ -211,11 +211,27 @@ spec:
                                 creation
                               rule: has(self.createSubnetSet) == has(oldSelf.createSubnetSet)
                                 && self.createSubnetSet == oldSelf.createSubnetSet
+                          provider:
+                            description: |-
+                              provider is the network provider used by this cluster.
+                              One of: "vsphere-network", "NSX", "NSX-VPC", "heterogeneous".
+                              Populated by the CAPI Runtime Extension from the per-Cluster network
+                              provider label. Required when the PerClusterNetworkProvider feature
+                              gate is enabled. Once set, the value is immutable.
+                            enum:
+                            - vsphere-network
+                            - NSX
+                            - NSX-VPC
+                            - heterogeneous
+                            type: string
                         type: object
                         x-kubernetes-validations:
                         - message: field 'nsxVPC' cannot be added or removed after
                             creation
                           rule: has(self.nsxVPC) == has(oldSelf.nsxVPC)
+                        - message: field 'provider' is immutable once set
+                          rule: '!has(oldSelf.provider) || has(self.provider) && self.provider
+                            == oldSelf.provider'
                     type: object
                     x-kubernetes-validations:
                     - message: field 'network' cannot be added or removed after creation

@@ -38,10 +38,25 @@ import (
 	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
+	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/network"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/vmoperator"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 )
+
+// staticTestFactory is a test-only services.NetworkProviderFactory that always
+// returns the configured provider regardless of cluster.
+type staticTestFactory struct {
+	provider services.NetworkProvider
+}
+
+func (s *staticTestFactory) ForCluster(_ context.Context, _ *vmware.ClusterContext) (services.NetworkProvider, error) {
+	return s.provider, nil
+}
+
+func (s *staticTestFactory) ForProvider(_ context.Context, _ string) (services.NetworkProvider, error) {
+	return s.provider, nil
+}
 
 var _ = Describe("Cluster Controller Tests", func() {
 	const (
@@ -70,9 +85,9 @@ var _ = Describe("Cluster Controller Tests", func() {
 		vsphereMachine = util.CreateVSphereMachine(machineName, clusterName, className, imageName, storageClass, controlPlaneLabelTrue)
 
 		reconciler = &ClusterReconciler{
-			Client:          controllerManagerContext.Client,
-			Recorder:        apirecord.NewFakeRecorder(100),
-			NetworkProvider: network.DummyNetworkProvider(),
+			Client:                 controllerManagerContext.Client,
+			Recorder:               apirecord.NewFakeRecorder(100),
+			NetworkProviderFactory: &staticTestFactory{provider: network.DummyNetworkProvider()},
 			ControlPlaneService: &vmoperator.CPService{
 				Client: controllerManagerContext.Client,
 			},

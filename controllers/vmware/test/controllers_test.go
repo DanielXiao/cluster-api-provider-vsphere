@@ -263,7 +263,12 @@ func getManager(cfg *rest.Config, networkProvider string, withWebhooks bool) man
 	controllerOpts := controller.Options{MaxConcurrentReconciles: 10, SkipNameValidation: ptr.To(true)}
 
 	opts.AddToManager = func(ctx context.Context, controllerCtx *capvcontext.ControllerManagerContext, mgr ctrlmgr.Manager) error {
-		if err := controllers.AddClusterControllerToManager(ctx, controllerCtx, mgr, true, controllerOpts); err != nil {
+		networkProviderFactory, err := manager.NewNetworkProviderFactory(ctx, controllerCtx.Client, controllerCtx.NetworkProvider)
+		if err != nil {
+			return err
+		}
+
+		if err := controllers.AddClusterControllerToManager(ctx, controllerCtx, mgr, true, networkProviderFactory, controllerOpts); err != nil {
 			return err
 		}
 
@@ -282,7 +287,7 @@ func getManager(cfg *rest.Config, networkProvider string, withWebhooks bool) man
 			return err
 		}
 
-		return controllers.AddMachineControllerToManager(ctx, controllerCtx, mgr, true, controllerOpts)
+		return controllers.AddMachineControllerToManager(ctx, controllerCtx, mgr, true, networkProviderFactory, controllerOpts)
 	}
 
 	mgr, err := manager.New(ctx, opts)

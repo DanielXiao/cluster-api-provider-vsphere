@@ -198,7 +198,8 @@ var _ = Describe("VirtualMachine tests", func() {
 		clusterContext, controllerManagerContext := util.CreateClusterContext(cluster, vsphereCluster)
 		supervisorMachineContext = util.CreateMachineContext(clusterContext, machine, vsphereMachine)
 		supervisorMachineContext.ControllerManagerContext = controllerManagerContext
-		vmService = VmopMachineService{Client: controllerManagerContext.Client, ConfigureControlPlaneVMReadinessProbe: network.DummyLBNetworkProvider().SupportsVMReadinessProbe()}
+		vmService = VmopMachineService{Client: controllerManagerContext.Client}
+		supervisorMachineContext.NetworkProvider = network.DummyLBNetworkProvider()
 	})
 
 	Context("Reconcile VirtualMachine", func() {
@@ -1216,7 +1217,7 @@ var _ = Describe("GetMachinesInCluster", func() {
 	}
 
 	controllerManagerContext := fake.NewControllerManagerContext(initObjs...)
-	vmService := VmopMachineService{Client: controllerManagerContext.Client, ConfigureControlPlaneVMReadinessProbe: network.DummyLBNetworkProvider().SupportsVMReadinessProbe()}
+	vmService := VmopMachineService{Client: controllerManagerContext.Client}
 
 	It("returns a list of VMs belonging to the cluster", func() {
 		objs, err := vmService.GetMachinesInCluster(context.TODO(),

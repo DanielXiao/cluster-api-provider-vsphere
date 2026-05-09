@@ -100,6 +100,27 @@ type ResourcePolicyService interface {
 	ReconcileResourcePolicy(ctx context.Context, clusterCtx *vmware.ClusterContext) error
 }
 
+// NetworkProviderFactory resolves the right NetworkProvider for a given
+// VSphereCluster reconcile. Implementations are expected to be cheap and
+// safe for concurrent use.
+type NetworkProviderFactory interface {
+	// ForCluster returns the NetworkProvider that should drive reconciles for
+	// clusterCtx.VSphereCluster. Never returns nil on success.
+	//
+	// Resolution order under the perCluster implementation:
+	//  1. clusterCtx.VSphereCluster.Spec.Network.Provider, if non-empty.
+	//  2. The --network-provider flag value (gate-on fallback for pre-existing
+	//     Clusters that pre-date the per-cluster label rollout).
+	//  3. An error, only if neither (1) nor (2) names a known provider.
+	ForCluster(ctx context.Context, clusterCtx *vmware.ClusterContext) (NetworkProvider, error)
+
+	// ForProvider returns the NetworkProvider for a given provider name. Used
+	// by webhooks and other admission paths that have only a provider string and
+	// not a full cluster context. Falls back to the flag-built provider when
+	// name is empty.
+	ForProvider(ctx context.Context, name string) (NetworkProvider, error)
+}
+
 // NetworkProvider provision network resources and configures VM based on network type.
 type NetworkProvider interface {
 	// HasLoadBalancer indicates whether this provider has a load balancer for Services.

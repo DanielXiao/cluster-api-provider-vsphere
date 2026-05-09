@@ -27,7 +27,7 @@ type VSphereMachine struct{}
 
 // SetupWebhookWithManager sets up VSphereMachine webhooks.
 func (webhook *VSphereMachine) SetupWebhookWithManager(mgr ctrl.Manager, networkProvider string) error {
-	return (&vmware.VSphereMachine{NetworkProvider: networkProvider}).SetupWebhookWithManager(mgr)
+	return (&vmware.VSphereMachine{Client: mgr.GetClient(), NetworkProvider: networkProvider}).SetupWebhookWithManager(mgr)
 }
 
 // VSphereMachineTemplate implements a validation webhook for VSphereMachineTemplate.
@@ -35,7 +35,7 @@ type VSphereMachineTemplate struct{}
 
 // SetupWebhookWithManager sets up VSphereMachineTemplate webhooks.
 func (webhook *VSphereMachineTemplate) SetupWebhookWithManager(mgr ctrl.Manager, networkProvider string) error {
-	return (&vmware.VSphereMachineTemplate{NetworkProvider: networkProvider}).SetupWebhookWithManager(mgr)
+	return (&vmware.VSphereMachineTemplate{Client: mgr.GetClient(), NetworkProvider: networkProvider}).SetupWebhookWithManager(mgr)
 }
 
 // VSphereCluster implements a validation and defaulting webhook for VSphereCluster.

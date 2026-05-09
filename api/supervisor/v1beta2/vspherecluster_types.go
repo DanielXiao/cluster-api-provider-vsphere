@@ -143,11 +143,21 @@ func (r *NSXVPC) IsDefined() bool {
 
 // Network defines the network configuration for the cluster with different network providers.
 // +kubebuilder:validation:XValidation:rule="has(self.nsxVPC) == has(oldSelf.nsxVPC)",message="field 'nsxVPC' cannot be added or removed after creation"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.provider) || has(self.provider) && self.provider == oldSelf.provider",message="field 'provider' is immutable once set"
 // +kubebuilder:validation:MinProperties=1
 type Network struct {
 	// nsxVPC defines the configuration when the network provider is NSX-VPC.
 	// +optional
 	NSXVPC NSXVPC `json:"nsxVPC,omitempty,omitzero"`
+
+	// provider is the network provider used by this cluster.
+	// One of: "vsphere-network", "NSX", "NSX-VPC", "heterogeneous".
+	// Populated by the CAPI Runtime Extension from the per-Cluster network
+	// provider label. Required when the PerClusterNetworkProvider feature
+	// gate is enabled. Once set, the value is immutable.
+	// +optional
+	// +kubebuilder:validation:Enum=vsphere-network;NSX;NSX-VPC;heterogeneous
+	Provider string `json:"provider,omitempty"`
 }
 
 // IsDefined returns true if the Network is defined.
@@ -260,6 +270,7 @@ type VSphereClusterV1Beta1DeprecatedStatus struct {
 // +kubebuilder:printcolumn:name="ControlPlane Endpoint",type="string",JSONPath=".spec.controlPlaneEndpoint.host",description="API Endpoint"
 // +kubebuilder:printcolumn:name="Paused",type="string",JSONPath=`.status.conditions[?(@.type=="Paused")].status`,description="Reconciliation paused",priority=10
 // +kubebuilder:printcolumn:name="Provisioned",type="string",JSONPath=".status.initialization.provisioned",description="VSphereCluster is provisioned"
+// +kubebuilder:printcolumn:name="NetworkProvider",type="string",JSONPath=".spec.network.provider",description="Per-cluster network provider"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation of VSphereCluster"
 
 // VSphereCluster is the Schema for the VSphereClusters API.

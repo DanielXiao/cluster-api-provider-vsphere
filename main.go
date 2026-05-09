@@ -610,10 +610,10 @@ func setupVAPIControllers(ctx context.Context, controllerCtx *capvcontext.Contro
 		return err
 	}
 
-	if err := controllers.AddClusterControllerToManager(ctx, controllerCtx, mgr, false, concurrency(vSphereClusterConcurrency)); err != nil {
+	if err := controllers.AddClusterControllerToManager(ctx, controllerCtx, mgr, false, nil, concurrency(vSphereClusterConcurrency)); err != nil {
 		return err
 	}
-	if err := controllers.AddMachineControllerToManager(ctx, controllerCtx, mgr, false, concurrency(vSphereMachineConcurrency)); err != nil {
+	if err := controllers.AddMachineControllerToManager(ctx, controllerCtx, mgr, false, nil, concurrency(vSphereMachineConcurrency)); err != nil {
 		return err
 	}
 	if err := controllers.AddVMControllerToManager(ctx, controllerCtx, mgr, clusterCache, concurrency(vSphereVMConcurrency)); err != nil {
@@ -636,11 +636,18 @@ func setupSupervisorControllers(ctx context.Context, controllerCtx *capvcontext.
 	if err := (&vmwarewebhooks.VSphereCluster{}).SetupWebhookWithManager(mgr, controllerCtx.NetworkProvider); err != nil {
 		return err
 	}
-	if err := controllers.AddClusterControllerToManager(ctx, controllerCtx, mgr, true, concurrency(vSphereClusterConcurrency)); err != nil {
+	// Build the network provider factory once. ForCluster/ForProvider dispatch
+	// happens on every reconcile and every admission call.
+	networkProviderFactory, err := manager.NewNetworkProviderFactory(ctx, controllerCtx.Client, controllerCtx.NetworkProvider)
+	if err != nil {
+		return fmt.Errorf("unable to create network provider factory: %w", err)
+	}
+
+	if err := controllers.AddClusterControllerToManager(ctx, controllerCtx, mgr, true, networkProviderFactory, concurrency(vSphereClusterConcurrency)); err != nil {
 		return err
 	}
 
-	if err := controllers.AddMachineControllerToManager(ctx, controllerCtx, mgr, true, concurrency(vSphereMachineConcurrency)); err != nil {
+	if err := controllers.AddMachineControllerToManager(ctx, controllerCtx, mgr, true, networkProviderFactory, concurrency(vSphereMachineConcurrency)); err != nil {
 		return err
 	}
 

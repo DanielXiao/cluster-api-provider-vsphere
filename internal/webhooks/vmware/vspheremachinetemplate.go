@@ -26,9 +26,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/cluster-api/util/topology"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
+	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/vmoperator"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 )
@@ -38,7 +40,12 @@ import (
 
 // VSphereMachineTemplate implements a validation webhook for VSphereMachineTemplate.
 type VSphereMachineTemplate struct {
-	// NetworkProvider is the network provider used by Supervisor based clusters
+	// Client is used to look up the owning VSphereCluster when the
+	// PerClusterNetworkProvider feature gate is enabled.
+	Client client.Client
+	// NetworkProvider is the network provider used by Supervisor based clusters.
+	// Used directly when the gate is off, and as a fallback when the gate is on
+	// but the owning Cluster has no spec.network.provider set.
 	NetworkProvider string
 }
 
@@ -96,8 +103,16 @@ func (webhook *VSphereMachineTemplate) ValidateUpdate(ctx context.Context, oldOb
 	return webhook.validate(ctx, nil, newObj)
 }
 
-func (webhook *VSphereMachineTemplate) validate(_ context.Context, _, newVSphereMachineTemplate *vmwarev1.VSphereMachineTemplate) (admission.Warnings, error) {
-	allErrs := validateNetwork(webhook.NetworkProvider, newVSphereMachineTemplate.Spec.Template.Spec.Network, field.NewPath("spec", "template", "spec", "network"))
+func (webhook *VSphereMachineTemplate) validate(ctx context.Context, _, newVSphereMachineTemplate *vmwarev1.VSphereMachineTemplate) (admission.Warnings, error) {
+	provider := webhook.NetworkProvider
+	if feature.Gates.Enabled(feature.PerClusterNetworkProvider) {
+		var err error
+		provider, err = resolveNetworkProvider(ctx, webhook.Client, newVSphereMachineTemplate.Namespace, newVSphereMachineTemplate.Labels, webhook.NetworkProvider)
+		if err != nil {
+			return nil, err
+		}
+	}
+	allErrs := validateNetwork(provider, newVSphereMachineTemplate.Spec.Template.Spec.Network, field.NewPath("spec", "template", "spec", "network"))
 
 	// Validate namingStrategy
 	namingStrategy := newVSphereMachineTemplate.Spec.Template.Spec.Naming

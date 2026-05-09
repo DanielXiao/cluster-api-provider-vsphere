@@ -35,12 +35,29 @@ import (
 // The hook is loosely typed so as to allow for different VirtualMachine backends.
 type VMModifier func(runtime.Object) (runtime.Object, error)
 
+// NetworkProviderCapabilities exposes the subset of services.NetworkProvider
+// behavior that downstream packages (e.g. vmoperator) need without creating
+// an import cycle through the services package (which depends on this package
+// for the ClusterContext type).
+type NetworkProviderCapabilities interface {
+	// SupportsVMReadinessProbe indicates whether this provider supports a VM
+	// readiness probe on the control-plane VM.
+	SupportsVMReadinessProbe() bool
+}
+
 // SupervisorMachineContext is a Go capvcontext used with a VSphereMachine.
 type SupervisorMachineContext struct {
 	*capvcontext.BaseMachineContext
 	VSphereCluster *vmwarev1.VSphereCluster
 	VSphereMachine *vmwarev1.VSphereMachine
 	VMModifiers    []VMModifier
+
+	// NetworkProvider is the NetworkProvider resolved for this Cluster on this
+	// reconcile. It is expected to be non-nil for supervisor-based reconciles.
+	// Stored on the context (rather than threaded through every method
+	// signature) so the existing VSphereMachineService interface, shared with
+	// the govmomi path, can stay unchanged.
+	NetworkProvider NetworkProviderCapabilities
 }
 
 // String returns VSphereMachineGroupVersionKind VSphereMachineNamespace/VSphereMachineName.

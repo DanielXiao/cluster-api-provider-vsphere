@@ -66,7 +66,10 @@ type ControllerManagerContext struct {
 	// endpoints.
 	Password string
 
-	// NetworkProvider is the network provider used by Supervisor based clusters
+	// NetworkProvider is the network provider used by Supervisor based clusters.
+	// When the PerClusterNetworkProvider feature gate is on, this string is used
+	// only as the fallback provider for Clusters that pre-date the per-cluster
+	// network provider label rollout (i.e. spec.network.provider is empty).
 	NetworkProvider string
 
 	// WatchFilterValue is used to filter incoming objects by label.

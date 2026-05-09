@@ -18,9 +18,9 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 
-	"github.com/pkg/errors"
 	"k8s.io/klog/v2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
@@ -41,7 +41,6 @@ import (
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
-	inframanager "sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/vmoperator"
 )
@@ -57,14 +56,14 @@ import (
 // +kubebuilder:rbac:groups=topology.tanzu.vmware.com,resources=zones,verbs=get;list;watch
 
 // AddClusterControllerToManager adds the cluster controller to the provided
-// manager.
-func AddClusterControllerToManager(ctx context.Context, controllerManagerCtx *capvcontext.ControllerManagerContext, mgr manager.Manager, supervisorBased bool, options controller.Options) error {
+// manager. networkProviderFactory is required when supervisorBased is true and
+// is ignored otherwise.
+func AddClusterControllerToManager(ctx context.Context, controllerManagerCtx *capvcontext.ControllerManagerContext, mgr manager.Manager, supervisorBased bool, networkProviderFactory services.NetworkProviderFactory, options controller.Options) error {
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "vspherecluster")
 
 	if supervisorBased {
-		networkProvider, err := inframanager.GetNetworkProvider(ctx, controllerManagerCtx.Client, controllerManagerCtx.NetworkProvider)
-		if err != nil {
-			return errors.Wrap(err, "failed to create a network provider")
+		if networkProviderFactory == nil {
+			return fmt.Errorf("networkProviderFactory is required for supervisor-based AddClusterControllerToManager")
 		}
 		reconciler := &vmware.ClusterReconciler{
 			Client:   controllerManagerCtx.Client,
@@ -75,7 +74,7 @@ func AddClusterControllerToManager(ctx context.Context, controllerManagerCtx *ca
 			ControlPlaneService: &vmoperator.CPService{
 				Client: controllerManagerCtx.Client,
 			},
-			NetworkProvider: networkProvider,
+			NetworkProviderFactory: networkProviderFactory,
 		}
 		builder := capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
 			For(&vmwarev1.VSphereCluster{}).
