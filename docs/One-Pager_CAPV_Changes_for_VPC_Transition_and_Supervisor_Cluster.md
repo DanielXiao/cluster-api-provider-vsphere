@@ -7,12 +7,12 @@ command-line flag, and holds a single `services.NetworkProvider` instance for
 the entire process. This is incompatible with two upcoming VKS features that a
 single CAPV process must serve at the same time:
 
-- [VKS Cluster Transition from VDS / NSX T1 to NSX VPC](./One-Pager_Support_VKS_Cluster_Transition_to_VPC.md) --
+- [VKS Cluster Transition from VDS / NSX T1 to NSX VPC](https://vmw-confluence.broadcom.net/spaces/WCP/pages/2474476412/One-Pager+Support+VKS+Cluster+Transition+from+VDS+NSX+T1+to+NSX+VPC+Network) --
   the network provider is per-namespace, and pre-existing Clusters keep their
   original provider after their namespace transitions to VPC. CAPV must apply
   per-provider defaulting, validation, and reconciliation rules on a
   per-Cluster basis.
-- [Advanced `networks.interfaces.options` for the Supervisor Cluster](./One-Pager_Advanced_Networks_Interfaces_Options_for_Supervisor_Cluster.md) --
+- [Advanced Network Interface Options for the Supervisor Cluster](https://vmw-confluence.broadcom.net/spaces/WCP/pages/2477856606/One-Pager+Advanced+Network+Interface+Options+For+Supervisor+Cluster) --
   the Supervisor Cluster picks a concrete workload provider per-cluster but
   uses a small set of `options` to selectively turn off provider-driven
   behavior (cluster-network provisioning, control-plane TCP probe,
@@ -51,7 +51,7 @@ is described in the upstream documents and is out of scope here.
 - Introducing a new "heterogeneous" network provider value. Heterogeneity is
   expressed entirely via `networks.interfaces.options`; the provider value
   on `VSphereCluster.spec.network.provider` is always one of
-  `vsphere-network`, `NSX`, `NSX-VPC`.
+  `vsphere-distributed`, `nsx-tier1`, `nsx-t_vpc`.
 
 ## Big Picture
 
@@ -65,7 +65,7 @@ apiVersion: vmware.infrastructure.cluster.x-k8s.io/v1beta1
 kind: VSphereCluster
 spec:
   network:
-    provider: vsphere-network | NSX | NSX-VPC
+    provider: vsphere-distributed | nsx-tier1 | nsx-t_vpc
     skipProvisionClusterNetwork: true   # advanced option, Supervisor Cluster only
     skipControlPlaneTCPProbe: true      # advanced option, Supervisor Cluster only
 ```
@@ -81,7 +81,7 @@ CAPV does not pick its provider at startup. Instead, a
 `VSphereCluster` on every controller reconcile.
 
 The factory holds a small registry of pre-built provider singletons (one per
-kind: `vsphere-network`, `NSX`, `NSX-VPC`). `ForCluster` reads
+kind: `vsphere-distributed`, `nsx-tier1`, `nsx-t_vpc`). `ForCluster` reads
 `VSphereCluster.spec.network.provider` and returns the matching singleton.
 
 If `VSphereCluster.spec.network.provider` is empty, CAPV treats the Cluster as
@@ -117,7 +117,7 @@ sequenceDiagram
     note over Main,Reg: Manager startup (once)
     alt NetworkProviderFromVSphereCluster gate ON
         Main->>Fac: NewPerClusterNetworkProviderFactory(client)
-        Fac->>Reg: pre-build<br/>{vsphere-network, NSX, NSX-VPC}
+        Fac->>Reg: pre-build<br/>{vsphere-distributed, nsx-tier1, nsx-t_vpc}
     else gate OFF
         Main->>Fac: NewStaticNetworkProviderFactory(client, --network-provider)
         Fac->>Reg: pre-build single provider<br/>from --network-provider
@@ -151,7 +151,7 @@ sequenceDiagram
     else gate ON, Spec.Network.Provider set
         WH->>WH: apply per-provider validation rules
     else gate ON, Spec.Network.Provider == ""
-        WH->>WH: skip provider-based validation;<br/>run only schema-level checks
+        WH->>WH: skip provider-based validation,<br/>run only schema-level checks
     end
     end
 ```
@@ -248,10 +248,7 @@ func (f *staticNetworkProviderFactory) ForCluster(
 ```
 
 The factory is constructed once at startup on the supervisor path and threaded
-into the supervisor cluster / machine controllers as an explicit parameter
-(not stored on `ControllerManagerContext`, to avoid an import cycle and to
-keep it swappable in tests). The govmomi path passes `nil`; the supervisor
-controllers reject `nil`.
+into the supervisor cluster / machine controllers as an explicit parameter.
 
 ## API Changes
 
@@ -272,7 +269,7 @@ apiVersion: vmware.infrastructure.cluster.x-k8s.io/v1beta1
 kind: VSphereCluster
 spec:
   network:
-    provider: vsphere-network | NSX | NSX-VPC
+    provider: vsphere-distributed | nsx-tier1 | nsx-t_vpc
     skipProvisionClusterNetwork: true
     skipControlPlaneTCPProbe: true
 ```
@@ -356,9 +353,9 @@ Applied only when the provider is resolved and
 
 | Provider | `VSphereMachine.spec.network.interfaces` rules |
 |---|---|
-| `vsphere-network` (VDS) | `primary` forbidden; `secondary` must be `netoperator.vmware.com/Network`. |
-| `NSX` (T1) | `interfaces` not supported. |
-| `NSX-VPC` | `primary` must be VPC `SubnetSet`; `secondary` may be VPC `SubnetSet` or `Subnet`. |
+| `vsphere-distributed` (VDS) | `primary` forbidden; `secondary` must be `netoperator.vmware.com/Network`. |
+| `nsx-tier1` (T1) | `interfaces` not supported. |
+| `nsx-t_vpc` | `primary` must be VPC `SubnetSet`; `secondary` may be VPC `SubnetSet` or `Subnet`. |
 
 ### `VSphereCluster` Update Admission
 
@@ -382,56 +379,38 @@ deliver that behavior.
 
 ### Controller Wiring
 
-#### `controllers/vspherecluster_controller.go` (setup)
+Both supervisor reconcilers are wired with a
+`NetworkProviderFactory` (replacing the singleton `NetworkProvider` field)
+built once in `setupSupervisorControllers` -- per the gate, either
+`NewPerClusterNetworkProviderFactory` or
+`NewStaticNetworkProviderFactory`. Each reconcile resolves the
+per-cluster `np` lazily; if the provider is not yet known
+(`ErrNetworkProviderEmpty`), the controller requeues without error.
 
-`AddClusterControllerToManager` gains a
-`networkProviderFactory services.NetworkProviderFactory` parameter, required
-when `supervisorBased`. The factory is built once in
-`setupSupervisorControllers` (per the gate, `NewPerClusterNetworkProviderFactory`
-or `NewStaticNetworkProviderFactory`) and forwarded into
-`vmware.ClusterReconciler`. The existing
-`vmware.ClusterReconciler.NetworkProvider` field is replaced by
-`NetworkProviderFactory`.
+1. **VSphereCluster controller**: call `factory.ForCluster()` on every
+   reconciliation to get the provider instance `np`. Run
+   `np.ProvisionClusterNetwork(...)` unless the cluster-scoped option
+   `skipProvisionClusterNetwork` is true. The control-plane endpoint /
+   `VirtualMachineService` path is unchanged -- it is already
+   short-circuited when `Cluster.spec.controlPlaneEndpoint` is pre-set
+   (the Supervisor Cluster case), so no new option is needed there.
+2. **VSphereMachine controller**: call `factory.ForCluster()` on every
+   reconciliation to get the provider instance `np`, then thread it into
+   `VMService`. For each machine:
+   - If the machine-scoped option `straightPropagateToVMSpec` is true,
+     deep-copy `VSphereMachine.spec.network.interfaces` verbatim into
+     `VirtualMachine.spec.network.interfaces`; otherwise call
+     `np.ConfigureVirtualMachine(...)`.
+   - Apply `primaryInterfaceIPAMModes` (when non-empty) to the primary
+     interface in `VirtualMachine.spec.network.interfaces`.
+   - For control-plane machines, configure the TCP readiness probe iff
+     `np.SupportsVMReadinessProbe()` and the cluster-scoped option
+     `skipControlPlaneTCPProbe` is false, replacing the constructor-time
+     `ConfigureControlPlaneVMReadinessProbe` flag.
 
-#### `controllers/vmware/vspherecluster_reconciler.go`
-
-At the top of `reconcileNormal`, resolve once. If
-`ErrNetworkProviderEmpty` is returned, log
-`"Network Provider is empty, wait for a valid value"` and requeue without
-error. Otherwise replace all `r.NetworkProvider.*` uses with `np.*`.
-
-#### `controllers/vspheremachine_controller.go`
-
-`AddMachineControllerToManager` gains the same
-`networkProviderFactory` parameter. The reconciler:
-
-- Drops `r.networkProvider`; stores the factory instead.
-- Resolves `np` per reconcile after the cluster context is available. On
-  empty provider, requeues -- it has no business configuring VM networks
-  until the Cluster's provider is known.
-- Threads `np` into `r.VMService` and into
-  `np.ConfigureVirtualMachine(...)`.
-
-#### `pkg/services/vmoperator/vmopmachine.go`
-
-Drop the constructor-time `ConfigureControlPlaneVMReadinessProbe bool`. Make
-the per-reconcile decision from `np` plus the cluster-scoped option:
-
-```go
-if !clusterCtx.VSphereCluster.Spec.Network.SkipControlPlaneTCPProbe &&
-    np.SupportsVMReadinessProbe() &&
-    infrautilv1.IsControlPlaneMachine(machine) {
-    // configure TCP-based readiness probe
-}
-```
-
-`np` is threaded in as a parameter on the `VMService` reconcile method (not
-stored on the context struct, to keep behavioral knobs out of state).
-
-#### `pkg/services/vmoperator/control_plane_endpoint.go`
-
-No code change. Already accepts `netProvider services.NetworkProvider`; the
-caller now passes the lazily-resolved `np`.
+The machine-scoped option `skipProviderBasedValidation` is a webhook-only
+concern (see [Changes to Validation Webhooks](#changes-to-validation-webhooks))
+and has no controller-side effect.
 
 ### `VirtualMachineService` (control-plane LB)
 
@@ -460,9 +439,9 @@ if !clusterCtx.VSphereCluster.Spec.Network.SkipProvisionClusterNetwork {
 
 | Provider | `skipProvisionClusterNetwork` | Effect |
 |---|---|---|
-| `vsphere-network` | `false` | Resolve the namespace's default `Network` (existing). |
-| `NSX` | `false` | Auto-create a `VirtualNetwork` (existing). |
-| `NSX-VPC` | `false` | Reconcile the per-cluster `SubnetSet` (existing). |
+| `vsphere-distributed` | `false` | Resolve the namespace's default `Network` (existing). |
+| `nsx-tier1` | `false` | Auto-create a `VirtualNetwork` (existing). |
+| `nsx-t_vpc` | `false` | Reconcile the per-cluster `SubnetSet` (existing). |
 | any | `true` | **No-op.** The networks referenced by `interfaces` already exist; CAPV does not provision them. `NetworkReady` is set to `True` immediately. `GetClusterNetworkName`, `GetVMServiceAnnotations`, `VerifyNetworkStatus` are also skipped. |
 
 Today this is the Supervisor Cluster's path: its workload network is a
@@ -494,7 +473,7 @@ if len(opts.PrimaryInterfaceIPAMModes) > 0 {
 
 | Provider | `straightPropagateToVMSpec` | Effect |
 |---|---|---|
-| `vsphere-network` / `NSX` / `NSX-VPC` | `false` | Existing per-provider logic. |
+| `vsphere-distributed` / `nsx-tier1` / `nsx-t_vpc` | `false` | Existing per-provider logic. |
 | any | `true` | **`VSphereMachine.spec.network.interfaces` is the source of truth.** Deep-copy `interfaces` (primary + secondaries, including `routes`, `mtu`, `gateway4/6`, etc.) verbatim into `vm.Spec.Network.Interfaces` on every reconcile, matching the re-assert pattern every other provider already uses. No provider-driven rewriting. |
 
 `primaryInterfaceIPAMModes`, when non-empty, is written verbatim to the
@@ -509,7 +488,7 @@ option `skipControlPlaneTCPProbe`.
 
 | Provider | `skipControlPlaneTCPProbe` | Probe configured? |
 |---|---|---|
-| `vsphere-network` / `NSX` / `NSX-VPC` | `false` | Per `np.SupportsVMReadinessProbe()` (existing). |
+| `vsphere-distributed` / `nsx-tier1` / `nsx-t_vpc` | `false` | Per `np.SupportsVMReadinessProbe()` (existing). |
 | any | `true` | **No.** Used by the Supervisor Cluster, whose control-plane VIP is pre-created and not fronted by a CAPV-managed `VirtualMachineService` to probe. |
 
 ## Backward Compatibility
