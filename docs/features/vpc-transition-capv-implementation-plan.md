@@ -13,7 +13,7 @@ explicitly **out of scope** here and will be delivered in their own PRs.
 
 In scope for this PR:
 1. New feature gate `ClusterNetworkProvider` (alpha, default off).
-2. New API field `VSphereCluster.spec.network.provider` (enum + immutability), in `v1beta2` with conversion.
+2. New API field `VSphereCluster.spec.network.provider` (enum + immutability), in **both** `v1beta1` and `v1beta2` (direct field-to-field conversion).
 3. A `NetworkProviderFactory` abstraction with a per-cluster factory (gate on) and a static factory (gate off).
 4. Lazy, per-cluster resolution of the `NetworkProvider` in the supervisor `VSphereCluster` and `VSphereMachine` controllers.
 5. Per-cluster provider resolution in the `VSphereCluster`, `VSphereMachine`, and `VSphereMachineTemplate` webhooks, plus immutability enforcement on `VSphereCluster` update.
@@ -30,7 +30,7 @@ Explicitly **out of scope** (deferred to the other two PRs):
 
 - **Enum values**: this PR adds only `vsphere-distributed | nsx-tier1 | vpc`. The `externally-managed` value is added by its own PR (adding an enum value is a backward-compatible CRD change).
 - **Naming**: rename the existing `pkg/manager` constants from the legacy names (`NSX-VPC`, `NSX`, `vsphere-network`) to the new names (`vpc`, `nsx-tier1`, `vsphere-distributed`). No mapping helper — the VKS Carvel package converts legacy→new and passes `--network-provider <new name>`.
-- **Versioning**: add `provider` to the `v1beta2` hub only, with conversion handling so `v1beta1 ↔ v1beta2` round-trips preserve it.
+- **Versioning**: add `provider` to **both** the `v1beta1` spoke and the `v1beta2` hub. Because the field exists identically on both versions, the generated `Convert_*` functions copy it directly and `v1beta1 ↔ v1beta2` round-trips preserve it without any `restored`-annotation logic.
 - **Gate OFF**: webhooks and controllers behave exactly as today, driven by the `--network-provider` flag via the static factory.
 
 ---
@@ -50,6 +50,8 @@ Explicitly **out of scope** (deferred to the other two PRs):
 
 ## 2. API: `VSphereCluster.spec.network.provider`
 
+Add the **same** `Provider` field to the `Network` struct in **both** API versions, with identical JSON tag, enum, and CEL marker so the generated conversion copies it directly.
+
 **File:** `api/supervisor/v1beta2/vspherecluster_types.go`
 - Add a `Provider` string field to the existing `Network` struct (currently lines 162–169, which holds only `NSXVPC`).
   - JSON tag `provider`, `+optional`.
@@ -58,14 +60,17 @@ Explicitly **out of scope** (deferred to the other two PRs):
 - The existing `Network` already drops `+kubebuilder:validation:MinProperties=1`-style guards; confirm `provider` participates correctly with the existing `MinProperties` constraint.
 - Update `Network.IsDefined()` (lines 171–174) if needed so a `Network` carrying only `provider` is considered defined (the current `reflect.DeepEqual` against the zero `Network{}` already handles this, but re-verify after the field is added).
 
-**File:** `api/supervisor/v1beta2/zz_generated.deepcopy.go`
-- Regenerate (no manual edit) — `provider` is a value string so deepcopy is trivial; regeneration keeps it consistent.
+**File:** `api/supervisor/v1beta1/vspherecluster_types.go`
+- Add the **identical** `Provider` field to the `v1beta1` `Network` struct (lines 160–167), with the same JSON tag `provider`, `+optional`, `+kubebuilder:validation:Enum=vsphere-distributed;nsx-tier1;vpc`, and the matching CEL immutability `XValidation` marker.
+- Re-verify `v1beta1` `Network.IsDefined()` (lines 169–172) the same way as the hub.
 
-**Conversion (v1beta1 spoke):**
-- **File:** `api/supervisor/v1beta1/vspherecluster_types.go` — the `v1beta1` `Network` struct (around lines 160–169) does **not** get the new field.
-- **File:** `api/supervisor/v1beta1/conversion.go` — `ConvertTo`/`ConvertFrom` for `VSphereCluster` (uses the `restored` pattern, lines 42–49). Add restore of `Spec.Network.Provider` from the marshalled annotation so a `v1beta1 → v1beta2 → v1beta1` round trip does not lose the field.
-- **File:** `api/supervisor/v1beta1/zz_generated.conversion.go` — regenerate via `make generate`.
-- **File:** `api/supervisor/v1beta1/conversion_test.go` — the fuzz round-trip test (`FuzzTestFunc`) will automatically exercise the new field; ensure it passes after the restore logic is added.
+**File:** `api/supervisor/v1beta2/zz_generated.deepcopy.go` and `api/supervisor/v1beta1/zz_generated.deepcopy.go`
+- Regenerate (no manual edit) — `provider` is a value string so deepcopy is trivial; regeneration keeps both consistent.
+
+**Conversion (now a direct copy, no `restored` logic):**
+- **File:** `api/supervisor/v1beta1/zz_generated.conversion.go` — regenerate via `make generate`. Because both `Network` structs now carry `Provider`, the generated `Convert_v1beta1_Network_To_v1beta2_Network` / `Convert_v1beta2_Network_To_v1beta1_Network` copy it field-to-field automatically.
+- **File:** `api/supervisor/v1beta1/conversion.go` — **no change needed** for `provider`; do **not** add a `restored`-annotation branch for it (the existing `restored` pattern at lines 42–49 stays only for the unrelated `Status.Initialization` handling).
+- **File:** `api/supervisor/v1beta1/conversion_test.go` — the fuzz round-trip test (`FuzzTestFunc`) automatically exercises the new field; ensure it passes (it should with no extra logic, since the field exists on both sides).
 
 **CRD manifests:**
 - Regenerate the supervisor CRDs (`make generate` / `make generate-manifests`) so `config/supervisor/crd/...` picks up the new enum + CEL rule. Do not hand-edit generated CRDs.
@@ -181,7 +186,7 @@ When the gate is **off**, the helper returns the static flag value (today's beha
 
 **File:** `internal/webhooks/vmware/vspherecluster.go`
 - `validateClusterNetwork` (lines 66–83): the `nsxVPC`-only-when-`NSX-VPC` check (line 75) should use the cluster's own `spec.network.provider` (mapped) when the gate is on, instead of the static `webhook.NetworkProvider`.
-- `ValidateUpdate` (line 56) currently ignores the old object. Add **immutability** enforcement: reject any update that changes a non-empty `spec.network.provider`; allow empty→non-empty. (This complements the CRD CEL rule; keep both for defense in depth and a clear error message.)
+- **Immutability** of a non-empty `spec.network.provider` (allow empty→non-empty, reject any later change) is enforced **solely by the CRD CEL rule** on the `Network` struct (§2). The webhook does **not** duplicate this check — we keep a single source of truth for the immutability contract to avoid drift.
 - Add enum/known-value validation for `provider` on create as a secondary guard (the CRD enum is primary).
 
 ### 6.6 `VSphereClusterTemplate` webhook
@@ -199,7 +204,7 @@ Update/extend:
 - `controllers/vspheremachine_controller.go` machine tests + `pkg/services/vmoperator/vmopmachine_test.go` (lines 201, 1292) for the per-cluster readiness-probe wiring.
 - Webhook tests: `internal/webhooks/vmware/vspherecluster_test.go`, `vspheremachine_test.go`, `vspheremachinetemplate_test.go`, `vsphereclustertemplate_test.go` — add gate-on cases (empty provider rejects, per-provider rules resolved from the owning `VSphereCluster`, immutability on update) and confirm gate-off behavior is unchanged.
 - `feature/gates_test.go` — new gate registered.
-- `api/supervisor/v1beta1/conversion_test.go` — round-trip preserves `provider`.
+- `api/supervisor/v1beta1/conversion_test.go` — round-trip preserves `provider` (now via direct field copy, no `restored` logic).
 - New `pkg/manager/network_factory_test.go`.
 
 ---
@@ -217,14 +222,14 @@ Update/extend:
 | Area | File(s) | Change |
 | --- | --- | --- |
 | Feature gate | `feature/feature.go`, `feature/gates_test.go` | Add + register `ClusterNetworkProvider` (alpha, off) |
-| API | `api/supervisor/v1beta2/vspherecluster_types.go` | Add `Network.Provider` (enum + immutability CEL) |
-| API (gen) | `api/supervisor/v1beta2/zz_generated.deepcopy.go`, CRDs under `config/supervisor/...` | Regenerate |
-| Conversion | `api/supervisor/v1beta1/conversion.go`, `zz_generated.conversion.go`, `conversion_test.go` | Restore `provider` on round-trip |
+| API | `api/supervisor/v1beta2/vspherecluster_types.go`, `api/supervisor/v1beta1/vspherecluster_types.go` | Add `Network.Provider` (enum + immutability CEL) to **both** versions |
+| API (gen) | `api/supervisor/v1beta2/zz_generated.deepcopy.go`, `api/supervisor/v1beta1/zz_generated.deepcopy.go`, CRDs under `config/supervisor/...` | Regenerate |
+| Conversion | `api/supervisor/v1beta1/zz_generated.conversion.go`, `conversion_test.go` | Regenerate (direct field copy; no manual `restored` logic) |
 | Names | `pkg/manager/network.go` | Rename constant values to new names (`vpc` / `nsx-tier1` / `vsphere-distributed`) |
 | Factory | `pkg/manager/network_factory.go` (+ `_test.go`) | `NetworkProviderFactory`, per-cluster + static impls, `ErrNetworkProviderEmpty` |
 | Startup | `main.go` | Build factory by gate; inject into controllers + webhooks |
 | Cluster ctrl | `controllers/vspherecluster_controller.go`, `controllers/vmware/vspherecluster_reconciler.go` | Inject factory; `ForCluster` per reconcile; empty→requeue |
 | Machine ctrl | `controllers/vspheremachine_controller.go` | Inject factory; resolve `np` per reconcile; per-cluster readiness probe |
 | Machine svc | `pkg/services/vmoperator/vmopmachine.go` | Make readiness-probe config per-cluster |
-| Webhooks | `webhooks/vmware/alias.go`, `internal/webhooks/vmware/vspherecluster.go`, `vspheremachine.go`, `vspheremachinetemplate.go` | Gate-aware per-cluster resolution; immutability on cluster update |
+| Webhooks | `webhooks/vmware/alias.go`, `internal/webhooks/vmware/vspherecluster.go`, `vspheremachine.go`, `vspheremachinetemplate.go` | Gate-aware per-cluster resolution (provider immutability is enforced by the CRD CEL rule, not the webhook) |
 | Tests | files listed in §7 | Update/extend |
