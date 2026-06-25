@@ -23,6 +23,13 @@ import (
 )
 
 const (
+	// ClusterNetworkProvider is a feature gate for the per-cluster network provider functionality
+	// for supervisor. When enabled, the network provider is resolved per-cluster from
+	// VSphereCluster.spec.network.provider instead of the static --network-provider flag.
+	//
+	// alpha: v1.17
+	ClusterNetworkProvider featuregate.Feature = "ClusterNetworkProvider"
+
 	// Every capv-specific feature gate should add method here following this template:
 	//
 	// // owner: @username
@@ -81,9 +88,10 @@ var (
 	}
 
 	supervisorGates = map[featuregate.Feature]featuregate.FeatureSpec{
-		NamespaceScopedZones: {Default: false, PreRelease: featuregate.Alpha},
-		NodeAutoPlacement:    {Default: false, PreRelease: featuregate.Alpha},
-		MultiNetworks:        {Default: false, PreRelease: featuregate.Alpha},
+		NamespaceScopedZones:   {Default: false, PreRelease: featuregate.Alpha},
+		NodeAutoPlacement:      {Default: false, PreRelease: featuregate.Alpha},
+		ClusterNetworkProvider: {Default: false, PreRelease: featuregate.Alpha},
+		MultiNetworks:          {Default: false, PreRelease: featuregate.Alpha},
 	}
 
 	supervisorVersionedGates = map[featuregate.Feature]featuregate.VersionedSpecs{
