@@ -17,19 +17,21 @@ Supervisor Cluster 2.0 is a dual-NIC cluster provisioned by VKS. It needs DNS an
 
 In Supervisor 1.0, route table `200` routes destination traffic to the workload network (Pod/Service/VM/Ingress). Supervisor 2.0 requires the same table, but VKS cannot create route tables or rules itself. Workload network IP ranges may also change on Day 2 (driven by customers), so we must update routes in place without rolling out new nodes.
 
-## Limitations of the Current In-Place Update
+## Why In-Place Update Is Not Used Yet
 
-Two limitations block us from using in-place update today:
+We chose to keep cloud-init as the single source of truth for OS network config (see the [design discussion](https://chat.google.com/room/AAAAOCLMaFY/H3a-QTlFhHY/9fkZqnibuYc?cls=10)). Network settings (name servers, search domains, routes, and PBR) are plumbed to the `VSphereMachine` and `VirtualMachine` CRs and delivered to the guest via `guestinfo.metadata` (provided by vm-operator). Day 1 boot is driven by cloud-init; the machine-agent then periodically checks `guestinfo.metadata` for Day 2 changes and re-renders the netplan/networkd configuration.
 
-* **OS network config must come from a single source of truth: cloud-init** (via `guestinfo.metadata` provided by vm-operator). We plumb network settings (name servers, search domains, routes, and PBR) from `VSphereMachine` and `VirtualMachine` CRs. Day 1 boot is driven by cloud-init; the machine-agent then periodically checks `guestinfo.metadata` for Day 2 changes and re-renders the netplan/networkd configuration. However, changing these settings changes the `VSphereMachine` spec, and in-place update only handles `MachineConfig` changes today. The Runtime Extension in-place hook is meant to update the `VirtualMachine` spec, but there is no guidance on how to stop the CAPV `VSphereMachine` controller from also updating it. The Runtime Extension patches `VirtualMachine`, while the machine-agent that performs the actual update only touches `MachineConfig`, so the Runtime Extension cannot verify that the in-place update is complete in order to report status in `UpdateMachineResponse`.
-* **Control plane nodes always use a spare node during in-place updates**, and this is not configurable per cluster.
+This design decision has not been implemented yet:
 
-**Plan:** ship DNS and PBR via rolling update first, then switch to in-place update once the limitations above are resolved.
+* **Pro:** there is a single source of truth for OS network config (cloud-init via `guestinfo.metadata`), so we avoid divergence between multiple config paths.
+
+A separate consideration also applies: by default, **control plane upgrades use a spare node**. CAPI already supports upgrading without a spare machine by setting `maxSurge: 0` on the `KubeadmControlPlane`, but the VKS built-in ClusterClass does not opt into this, to maximize system reliability. The Supervisor custom ClusterClass can set `maxSurge: 0` where in-place control plane updates are desired.
+
+**Plan:** Since we only propagate configurations on VirtualMachine creation, we do not support updates for now. Once the in-place update work is complete, we will add update support.
 
 ## Goals
 
 * Let the Supervisor configure DNS and Policy-Based Routing per interface in the Supervisor namespace. Since customers may also want to configure them on their Workload clusters, support the same on the NSX VPC network.
-* Prepare what is needed to switch to in-place update later.
 
 ## Non-Goals
 
@@ -77,13 +79,17 @@ Add validation:
 
 Expose the same fields (optional) in `VSphereMachineTemplate` / `VSphereMachine`.
 
+#### Feature Gate
+
+Add a CAPV feature gate, `PerInterfaceNetworkConfig` (alpha, default off). It gates the CAPV side of this feature: the new API fields are only read and propagated to the `VirtualMachine` spec when the gate is enabled. 
+
+End-to-end the feature is still gated by the existing VKS capability flag `supervisor_network_provider`, which coordinates Runtime Extension behavior, the GCC webhook, and CAPV together. The `PerInterfaceNetworkConfig` gate is the CAPV-local switch within that.
+
 #### Network Provider Implementation Change
 
-In the VPC and externally-managed provider implementations, `ConfigureVirtualMachine(ctx, clusterCtx, machine, vm) error` propagates the interface configuration straight into the `VirtualMachine` spec, including the new fields above.
+In the VPC and externally-managed provider implementations, CAPV propagates the interface configuration (the new `nameservers`, `searchDomains`, `routes`, and `routingPolicy` fields) from `VSphereMachine` into the `VirtualMachine` spec **only on create**. Once the `VirtualMachine` exists, CAPV treats these fields as read-only and never overwrites them.
 
-### Capability Flag
-
-The existing VKS capability flag `supervisor_network_provider` gates the feature end-to-end: Runtime Extension behavior, GCC webhook, and CAPV.
+This keeps the create path simple today and is forward-compatible with in-place update: when the Runtime Extension in-place update is implemented (see "Why In-Place Update Is Not Used Yet"), it owns Day 2 changes by patching the `VirtualMachine` directly, and CAPV will not fight it.
 
 ## End-to-End Example
 
@@ -375,4 +381,5 @@ default via 192.168.1.1 dev eth0 proto static
 
 * [`nameservers`](https://github.com/vmware-tanzu/vm-operator/blob/release/vc-9.1.0/api/v1alpha5/virtualmachine_network_types.go#L160) and [`searchDomains`](https://github.com/vmware-tanzu/vm-operator/blob/release/vc-9.1.0/api/v1alpha5/virtualmachine_network_types.go#L181) already exist. When the user supplies `nameservers`, vm-operator must not override them. Expected priority: user-supplied > `SubnetPort`/`NetworkInterface` settings > global settings of the Supervisor workload network.
 * Plumb `routes.table` and `routingPolicy` into the `VirtualMachine` v1alpha6 interface spec.
+* The new fields must work across all three network types a Supervisor cluster NIC can attach to: VDS, NSX T1, and NSX VPC. VKS skips provider-based validation because the Supervisor uses the `externally-managed` provider.
 * Update `guestinfo.metadata` whenever the `VirtualMachine` interface spec changes (this is preparation for in-place update).
