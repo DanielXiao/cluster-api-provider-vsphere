@@ -81,9 +81,9 @@ Expose the same fields (optional) in `VSphereMachineTemplate` / `VSphereMachine`
 
 #### Feature Gate
 
-Add a CAPV feature gate, `PerInterfaceNetworkConfig` (alpha, default off). It gates the CAPV side of this feature: the new API fields are only read and propagated to the `VirtualMachine` spec when the gate is enabled. 
+Add a CAPV feature gate, `DNSAndPolicyBasedRouting` (alpha, default off). It gates the CAPV side of this feature: the new API fields are only read and propagated to the `VirtualMachine` spec when the gate is enabled. 
 
-End-to-end the feature is still gated by the existing VKS capability flag `supervisor_network_provider`, which coordinates Runtime Extension behavior, the GCC webhook, and CAPV together. The `PerInterfaceNetworkConfig` gate is the CAPV-local switch within that.
+End-to-end the feature (https://vmw-jira.broadcom.net/browse/GCM-18278 and https://vmw-jira.broadcom.net/browse/GCM-18210) is still gated by the existing VKS capability flag `enhancement_for_supervisor_network`, which coordinates Runtime Extension behavior, the GCC webhook, and CAPV together. The `DNSAndPolicyBasedRouting` gate is the CAPV-local switch within that.
 
 #### Network Provider Implementation Change
 

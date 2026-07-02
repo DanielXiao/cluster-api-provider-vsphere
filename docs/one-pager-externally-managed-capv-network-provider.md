@@ -122,6 +122,10 @@ provider == "externally-managed"  ->  externallyManagedNetworkProvider
 
 No other CAPV code needs to know about the externally-managed value; everything flows through the `NetworkProvider` interface.
 
+#### Feature Gate
+
+Add a CAPV feature gate, ExternallyManagedProvider (alpha, default off). It gates the CAPV side of this feature: externally-managed provider can be set when the gate is enabled.
+
 #### ServiceDiscovery Controller
 
 The ServiceDiscovery controller reconciles a headless `default/supervisor` Service and its Endpoints inside the target Cluster, pointing them at the discovered Supervisor kube-apiserver VIP/FIP. This Service is consumed by the para-virtualized add-ons vSphere CPI and vSphere CSI, which run inside a workload VKS Cluster and use it to reach the Supervisor kube-apiserver.
@@ -136,7 +140,7 @@ When `VSphereCluster.spec.network.provider` is set to externally-managed, addons
 
 ### Capability Flag
 
-A VKS capability flag `supervisor_network_provider` gates the feature end-to-end: runtime extension behavior, GCC webhook skip, CAPV provider registration, and CAPV webhook skip.
+A VKS capability flag `enhancement_for_supervisor_network` gates the feature end-to-end: runtime extension behavior, GCC webhook skip, CAPV provider registration, and CAPV webhook skip.
 
 This flag depends on two other flags:
 * The VKS capability flag `per_namespace_network_provider` (see [One-Pager: Support VKS Cluster Transition from VDS / NSX T1 to NSX VPC Network](./one-pager-vks-cluster-transition.md)), because the externally-managed provider is selected per namespace alongside the other per-namespace network providers.
