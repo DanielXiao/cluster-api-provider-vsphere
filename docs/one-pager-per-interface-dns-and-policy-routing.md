@@ -15,7 +15,7 @@ Supervisor Cluster 2.0 is a dual-NIC cluster provisioned by VKS. It needs DNS an
 
 **Policy-Based Routing**
 
-In Supervisor 1.0, route table `200` routes destination traffic to the workload network (Pod/Service/VM/Ingress). Supervisor 2.0 requires the same table, but VKS cannot create route tables or rules itself. Workload network IP ranges may also change on Day 2 (driven by customers), so we must update routes in place without rolling out new nodes.
+In Supervisor 1.0, route table `200` routes destination traffic to the workload network (Pod/Service/VM/Ingress). Supervisor 2.0 requires the same routing behavior. VKS does not configure the guest OS directly; it plumbs route and PBR settings into the `VirtualMachine` spec so vm-operator and cloud-init can apply them at boot. Workload network IP ranges may also change on Day 2 (driven by customers), so those settings must eventually be reconciled on running nodes without a rollout. That in-place reconciliation path is not implemented yet (see below).
 
 ## Why In-Place Update Is Not Used Yet
 
@@ -32,6 +32,7 @@ A separate consideration also applies: by default, **control plane upgrades use 
 ## Goals
 
 * Let the Supervisor configure DNS and Policy-Based Routing per interface in the Supervisor namespace. Since customers may also want to configure them on their Workload clusters, support the same on the NSX VPC network.
+* Limit scope to Day 1 creation only. Day 2 in-place updates will be addressed in a dedicated design once the in-place update framework is complete.
 
 ## Non-Goals
 
@@ -68,7 +69,7 @@ Propagate these settings into `VSphereMachineTemplate` / `VSphereMachine`.
 
 ### Guest Cluster Controller – Cluster Webhook
 
-Add validation:
+Add validation. Prefer structural rules (CEL `XValidation` markers on the API types) when they can express the constraint; use the Cluster validating webhook only when CEL cannot—for example, when the rule depends on runtime context such as the resolved network provider:
 
 * If `routes.to` is `default`, `table` must be set. This avoids adding multiple default routes to the main route table, which would break the CNI.
 * If the Cluster network provider is VDS or NSX T1, `nameservers`, `searchDomains`, and `routingPolicy` must not be set.
